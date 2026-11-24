@@ -1,0 +1,102 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: Request SignPath production signing for the selected release tag
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build
+        run: dotnet build ClockSaver.csproj -c Release -warnaserror
+      - name: Test the standalone screen saver
+        run: ./Test-Release.ps1
+      - name: Read release metadata
+        id: metadata
+        shell: pwsh
+        run: |
+          $info = (Get-Item -LiteralPath 'bin/Release/net48/Clock.scr').VersionInfo
+          if ($info.ProductName -cne 'CLOCK Screen Saver' -or $info.ProductVersion -cnotmatch '^\d+\.\d+\.\d+$') {
+            throw 'Unexpected Clock.scr product metadata.'
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -cne "v$($info.ProductVersion)") {
+            throw 'The Git tag must match the Clock.scr product version.'
+          }
+          "version=$($info.ProductVersion)" >> $env:GITHUB_OUTPUT
+      - name: Upload unsigned artifact
+        id: unsigned
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Clock-screensaver-unsigned
+          path: |
+            bin/Release/net48/Clock.scr
+          if-no-files-found: error
+    outputs:
+      artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+      version: ${{ steps.metadata.outputs.version }}
+
+  sign:
+    if: github.event_name == 'workflow_dispatch' && inputs.sign
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 80
+    environment: signpath
+    steps:
+      - name: Require an official release tag and SignPath configuration
+        shell: pwsh
+        env:
+          ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+        run: |
+          if ($env:GITHUB_REPOSITORY -cne 'geniuskey/clock-screensaver' -or $env:GITHUB_REF -cnotmatch '^refs/tags/v\d+\.\d+\.\d+$') {
+            throw 'Signing requires an official version tag in geniuskey/clock-screensaver.'
+          }
+          if (!$env:ORGANIZATION_ID -or !$env:PROJECT_SLUG -or !$env:SIGNING_POLICY_SLUG) {
+            throw 'Configure the SignPath environment variables before requesting signing.'
+          }
+      - name: Request Authenticode signing
+        uses: signpath/github-action-submit-signing-request@a2c5b60d9c75f073142b653c354b632eedce097b # v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: clock-scr
+          github-artifact-id: ${{ needs.build.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: signed
+          parameters: |
+            version: ${{ toJSON(needs.build.outputs.version) }}
+      - name: Verify downloaded signature and timestamp
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature -LiteralPath 'signed/Clock.scr'
+          if ($signature.Status -ne 'Valid' -or !$signature.TimeStamperCertificate -or
+              $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'SignPath Foundation') {
+            throw "Expected a valid timestamped SignPath Foundation signature. Status: $($signature.Status)."
+          }
+          Get-FileHash -LiteralPath 'signed/Clock.scr' -Algorithm SHA256
+      - name: Upload verified signed artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Clock-screensaver-signed
+          path: signed/Clock.scr
+          if-no-files-found: error

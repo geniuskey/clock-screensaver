@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The CLOCK screen saver for Windows: one self-contained Clock.scr.
+
+    The WebView2 SDK assembly and native loaders are embedded. The online
+    clock uses the WebView2 Runtime installed on the machine.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Clock</AssemblyName>
+    <RootNamespace>ClockSaver</RootNamespace>
+    <Prefer32Bit>false</Prefer32Bit>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.1.1</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Product>CLOCK Screen Saver</Product>
+    <Description>CLOCK — Precision Clock</Description>
+    <Company>Euiyun Lab</Company>
+    <Copyright>All rights reserved.</Copyright>
+    <GenerateAppConfig>false</GenerateAppConfig>
+    <WebView2Version>1.0.2903.40</WebView2Version>
+    <WebView2Package>$(PkgMicrosoft_Web_WebView2)/</WebView2Package>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Web" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="$(WebView2Version)" GeneratePathProperty="true" />
+    <!-- So that it builds without the .NET Framework developer pack (and off Windows). -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ClockEmbed Include="$(WebView2Package)lib/net462/Microsoft.Web.WebView2.Core.dll" LogicalName="Microsoft.Web.WebView2.Core.dll" />
+    <ClockEmbed Include="$(WebView2Package)runtimes/win-x64/native/WebView2Loader.dll" LogicalName="loader/x64/WebView2Loader.dll" />
+    <ClockEmbed Include="$(WebView2Package)runtimes/win-x86/native/WebView2Loader.dll" LogicalName="loader/x86/WebView2Loader.dll" />
+    <ClockEmbed Include="$(WebView2Package)runtimes/win-arm64/native/WebView2Loader.dll" LogicalName="loader/arm64/WebView2Loader.dll" />
+    <EmbeddedResource Include="@(ClockEmbed)" />
+    <EmbeddedResource Include="assets/preview.jpg" LogicalName="ClockPreview.jpg" />
+    <EmbeddedResource Include="assets/faces/*.jpg">
+      <LogicalName>faces/%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <!-- A .scr that silently lacks one of these would only fail on someone else's machine. -->
+  <Target Name="CheckClockEmbeds" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('%(ClockEmbed.FullPath)')" Text="Missing WebView2 file: %(ClockEmbed.FullPath)" />
+  </Target>
+
+  <!-- Windows recognises a screen saver by its extension: Clock.exe → Clock.scr. -->
+  <Target Name="CopyAsScr" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFiles="$(OutDir)Clock.scr" />
+  </Target>
+
+</Project>
